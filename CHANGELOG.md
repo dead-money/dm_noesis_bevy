@@ -6,6 +6,22 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-02
+
+### Changed
+
+- **Bevy 0.19 / wgpu 29.** The crate tracks Bevy 0.19 (see the README's version
+  map; Bevy 0.18 users stay on 0.12). The UI composite now runs as plain
+  systems in Bevy's `Core2d`/`Core3d` schedules (the render graph is gone in
+  0.19): after the 2D main pass and before tonemapping, and for tagged
+  `NoesisCamera` 3D views after post-processing and before upscaling.
+  Extracted components carry an explicit `SyncComponent` contract.
+
+### Fixed
+
+- The spirv-val `AtomicIAdd` validation spam on Vulkan is gone (upstream naga
+  fix shipped with wgpu 28+, inherited via wgpu 29).
+
 ## [0.12.0] - 2026-07-02
 
 ### Added

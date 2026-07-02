@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/noesis_bevy.svg)](https://crates.io/crates/noesis_bevy)
 [![docs.rs](https://img.shields.io/docsrs/noesis_bevy)](https://docs.rs/noesis_bevy)
 
-A Bevy 0.18 plugin that renders [Noesis GUI](https://www.noesisengine.com/) XAML-driven UI into your frame. Noesis draws the scene on Bevy's own GPU; the plugin composites the result onto a camera.
+A Bevy 0.19 plugin that renders [Noesis GUI](https://www.noesisengine.com/) XAML-driven UI into your frame. Noesis draws the scene on Bevy's own GPU; the plugin composites the result onto a camera.
 
 It builds on the FFI crate [`noesis_runtime`](https://github.com/dead-money/noesis_runtime), which wraps the C++ SDK. All `unsafe` lives there. This crate has none of its own and sets `#![forbid(unsafe_code)]`.
 
@@ -29,8 +29,8 @@ Set `NOESIS_LICENSE_NAME` and `NOESIS_LICENSE_KEY` to apply your license. Withou
 
 ```toml
 [dependencies]
-bevy = "0.18"
-noesis_bevy = "0.10"
+bevy = "0.19"
+noesis_bevy = "0.13"
 ```
 
 It links the Noesis SDK at build time, so you need `NOESIS_SDK_DIR` set (see above) to compile.

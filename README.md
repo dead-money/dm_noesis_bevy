@@ -104,14 +104,14 @@ fn regen(mut q: Query<&mut Health, With<UiPanel>>) {
 
 Two panels of the same type bind independently. Show and hide is a `String` field bound to `Visibility` (`visibility::{VISIBLE, COLLAPSED, HIDDEN}`), with no converter.
 
-**List = query.** A list's rows are entities. Tag an entity into a list and it appears as a row; the bound `ObservableCollection` is reconciled by `Entity`, so mutating one component updates only its row and selection survives a reorder:
+**List = query.** A list is its own entity naming the view it renders into; its rows are entities too. Tag an entity into a list and it appears as a row; the bound `ObservableCollection` is reconciled by `Entity`, so mutating one component updates only its row and selection survives a reorder. One view can own any number of lists:
 
 ```rust
 #[derive(Component, NoesisViewModel, Clone)]
 struct Item { name: String, qty: i32 }
 
-commands.entity(view).insert(UiList::new("Inventory"));
-commands.spawn((Item { name: "Potion".into(), qty: 3 }, ListedIn(view)));
+let list = commands.spawn(UiList::new(view, "Inventory")).id();
+commands.spawn((Item { name: "Potion".into(), qty: 3 }, ListedIn(list)));
 ```
 
 The selected row carries a `Selected` marker, read back with `Query<&Item, With<Selected>>`.

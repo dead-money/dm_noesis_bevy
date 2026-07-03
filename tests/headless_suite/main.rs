@@ -74,6 +74,7 @@ mod headless_panel_parse_error;
 mod headless_panel_parse_warning;
 mod headless_panel_routed_events;
 mod headless_pointer_over_ui_reset;
+mod headless_pointer_over_ui_wheel;
 mod headless_required_bridges;
 mod headless_theme_resources;
 mod headless_view_model;

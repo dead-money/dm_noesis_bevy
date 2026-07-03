@@ -4447,11 +4447,13 @@ impl NoesisRenderState {
                 } => {
                     over_ui = scene.view.mouse_button_up(x, y, button);
                 }
+                // Wheel/scroll return *handled*, not a hit-test: unhandled says
+                // nothing about pointer position, so these only raise the flag.
                 E::MouseWheel { x, y, delta } => {
-                    over_ui = scene.view.mouse_wheel(x, y, delta);
+                    over_ui |= scene.view.mouse_wheel(x, y, delta);
                 }
                 E::MouseHWheel { x, y, delta } => {
-                    over_ui = scene.view.mouse_hwheel(x, y, delta);
+                    over_ui |= scene.view.mouse_hwheel(x, y, delta);
                 }
                 E::Scroll {
                     x,
@@ -4459,7 +4461,7 @@ impl NoesisRenderState {
                     value,
                     horizontal: false,
                 } => {
-                    over_ui = scene.view.scroll(x, y, value);
+                    over_ui |= scene.view.scroll(x, y, value);
                 }
                 E::Scroll {
                     x,
@@ -4467,7 +4469,7 @@ impl NoesisRenderState {
                     value,
                     horizontal: true,
                 } => {
-                    over_ui = scene.view.hscroll(x, y, value);
+                    over_ui |= scene.view.hscroll(x, y, value);
                 }
                 E::TouchDown { x, y, id } => {
                     over_ui = scene.view.touch_down(x, y, id);

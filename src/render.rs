@@ -840,6 +840,11 @@ struct PanelEntry {
     /// `UIElement::KeyDown` subscriptions on fragment-internal elements, keyed by
     /// `x:Name`. Same rules as [`Self::click_subs`].
     keydown_subs: HashMap<String, KeyDownSubscription>,
+    /// Arbitrary routed-event subscriptions on fragment-internal elements, keyed
+    /// by `(x:Name, RoutedEvent::as_str())`, for a
+    /// [`crate::routed_events::NoesisEventWatch`] placed on this panel entity.
+    /// Same namescope + drop-order rules as [`Self::click_subs`].
+    event_subs: HashMap<(String, &'static str), EventSubscription>,
     /// The loaded sub-XAML, its own namescope. `DataContext` set once at build.
     fragment: FrameworkElement,
     /// Aggregated plain-VM instance: one synthetic class whose properties are the
@@ -906,6 +911,7 @@ impl PanelEntry {
         Some(Self {
             click_subs: HashMap::new(),
             keydown_subs: HashMap::new(),
+            event_subs: HashMap::new(),
             fragment,
             instance,
             _class: class,
@@ -2664,6 +2670,11 @@ impl NoesisRenderState {
         queue: &SharedRoutedEventQueue,
     ) {
         let Some(scene) = self.scenes.get_mut(&entity) else {
+            // Not a view: a NoesisEventWatch may sit on a panel whose fragment
+            // owns a private namescope the host scene can't see.
+            if self.panels.contains_key(&entity) {
+                self.sync_event_subs_panel(entity, entries, queue);
+            }
             return;
         };
 
@@ -2742,6 +2753,99 @@ impl NoesisRenderState {
 
         // Prune this view's config snapshots whose (name, event) is no longer
         // watched (leave other views' entries intact).
+        self.last_event_config.retain(|(ent, name, evname), _| {
+            *ent != entity
+                || entries
+                    .iter()
+                    .any(|e| &e.name == name && e.event.as_str() == *evname)
+        });
+    }
+
+    /// Panel flavor of [`Self::sync_event_subscriptions_for`]: resolve the
+    /// watched names in the panel *fragment*'s private namescope (a host-view
+    /// `FindName` can't see inside it). Emitted events carry the host view as
+    /// `view`; the trigger target defaults to the panel entity.
+    fn sync_event_subs_panel(
+        &mut self,
+        entity: Entity,
+        entries: &[crate::routed_events::EventWatchEntry],
+        queue: &SharedRoutedEventQueue,
+    ) {
+        let Some(panel) = self.panels.get_mut(&entity) else {
+            return;
+        };
+        let host = panel.host;
+
+        // Drop subscriptions that are no longer requested. `retain` runs each
+        // entry's drop in place, which fires the C++ unsubscribe.
+        panel.event_subs.retain(|(name, evname), _| {
+            entries
+                .iter()
+                .any(|e| e.name == *name && e.event.as_str() == *evname)
+        });
+
+        for entry in entries {
+            let evname = entry.event.as_str();
+            let key = (entry.name.clone(), evname);
+
+            let target = entry.target.unwrap_or(entity);
+            // Leave an existing subscription alone iff its captured flags + target
+            // still match the requested ones (sibling map keyed by panel + name +
+            // event; the callback captures all three by value).
+            if panel.event_subs.contains_key(&key)
+                && self
+                    .last_event_config
+                    .get(&(entity, entry.name.clone(), evname))
+                    .is_some_and(|prev| *prev == (entry.mark_handled, entry.handled_too, target))
+            {
+                continue;
+            }
+
+            let Some(element) = resolve_named(&panel.fragment, &entry.name) else {
+                warn!(
+                    "NoesisEventWatch: x:Name {:?} not found in panel fragment (host {host:?})",
+                    entry.name,
+                );
+                continue;
+            };
+
+            let queue_handle = queue.clone();
+            let captured_name = entry.name.clone();
+            let captured_event = entry.event;
+            let mark_handled = entry.mark_handled;
+            let Some(sub) = subscribe_event(
+                &element,
+                entry.event,
+                entry.handled_too,
+                move |args: &EventArgs| {
+                    let snapshot = RoutedEventSnapshot::capture(args);
+                    queue_handle.push(
+                        host,
+                        target,
+                        captured_name.clone(),
+                        captured_event,
+                        snapshot,
+                    );
+                    mark_handled
+                },
+            ) else {
+                warn!(
+                    "NoesisEventWatch: element {:?} not a UIElement / event {:?} unknown; skipping",
+                    entry.name, evname,
+                );
+                continue;
+            };
+
+            // Replace any stale sub (flag/target change); drop runs the C++ unsubscribe.
+            panel.event_subs.insert(key, sub);
+            self.last_event_config.insert(
+                (entity, entry.name.clone(), evname),
+                (entry.mark_handled, entry.handled_too, target),
+            );
+        }
+
+        // Prune this panel's config snapshots whose (name, event) is no longer
+        // watched (leave other entities' entries intact).
         self.last_event_config.retain(|(ent, name, evname), _| {
             *ent != entity
                 || entries
@@ -4813,6 +4917,9 @@ impl NoesisRenderState {
     pub(crate) fn reap_event_watch_for(&mut self, entity: Entity) {
         if let Some(scene) = self.scenes.get_mut(&entity) {
             scene.event_subs.clear();
+        }
+        if let Some(panel) = self.panels.get_mut(&entity) {
+            panel.event_subs.clear();
         }
         self.last_event_config
             .retain(|(ent, _, _), _| *ent != entity);

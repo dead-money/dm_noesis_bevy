@@ -6,6 +6,8 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-02
+
 ### Changed
 
 - **`UiList` is now its own entity (breaking).** A list no longer rides on the

@@ -62,6 +62,7 @@ mod headless_items_source;
 mod headless_list_query;
 mod headless_list_select;
 mod headless_list_teardown;
+mod headless_list_two_per_view;
 mod headless_list_two_row_types;
 mod headless_observer_click;
 mod headless_observer_row;

@@ -4,13 +4,16 @@
 //!
 //! Before the per-bridge `RemovedComponents<C>` reap systems, reconcile only
 //! visited entities that still *had* the component, so dropping (say) a `UiList`
-//! off a view that stayed alive left its `ListBinding` — collection, realized row
-//! instances, and row-class registration — bound and rendering forever.
+//! (which now lives on its own list entity, its binding still keyed by the view it
+//! renders into) left its `ListBinding` — collection, realized row instances, and
+//! row-class registration — bound and rendering forever.
 //!
-//! This drives a view with a `ListBox` + entity-rows until its binding is live
-//! (`live_lists == 1`), then `remove::<UiList>()` while keeping the view (and its
-//! scene) alive, and asserts the binding drains to 0 with the scene still live —
-//! i.e. the reap ran off component removal, and did *not* tear the scene down.
+//! This drives a view with a `ListBox` + a `UiList` entity + entity-rows until the
+//! binding is live (`live_lists == 1`), then `remove::<UiList>()` off the list
+//! entity while keeping the view (and its scene) alive, and asserts the binding
+//! drains to 0 with the scene still live — i.e. the reap ran off component removal,
+//! resolved the list entity back to its `(view, name)` binding, and did *not* tear
+//! the scene down.
 //!
 //! Font-free XAML so the scene builds without a font folder.
 
@@ -70,8 +73,10 @@ fn removing_uilist_from_a_live_view_reaps_its_binding() {
                         size: UVec2::new(256, 256),
                         ..default()
                     },
-                    UiList::new("Inv").sorted_by(1, false),
                 ))
+                .id();
+            let list = commands
+                .spawn(UiList::new(view, "Inv").sorted_by(1, false))
                 .id();
             for (label, weight) in [("A", 1), ("B", 2), ("C", 3)] {
                 commands.spawn((
@@ -79,7 +84,7 @@ fn removing_uilist_from_a_live_view_reaps_its_binding() {
                         label: label.into(),
                         weight,
                     },
-                    ListedIn(view),
+                    ListedIn(list),
                 ));
             }
         },
@@ -98,8 +103,9 @@ fn removing_uilist_from_a_live_view_reaps_its_binding() {
                 *pre_sys.lock().unwrap() = Some((diag.live_lists, diag.live_scenes));
             }
             if *frame == REMOVE_AT {
-                // Drop only the UiList; the view (and its scene) stay live. The
-                // reap must run off RemovedComponents<UiList>, not despawn.
+                // Drop only the UiList off its list entity; the view (and its scene)
+                // stay live. The reap must run off RemovedComponents<UiList>, not
+                // despawn, and resolve the list entity to its (view, name) binding.
                 for e in &views {
                     commands.entity(e).remove::<UiList>();
                 }

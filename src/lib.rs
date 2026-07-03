@@ -107,8 +107,8 @@ pub use items::{
 };
 pub use layout::{Margin, NoesisLayout, NoesisLayoutPlugin};
 pub use list::{
-    ListSort, ListedIn, NoesisListAppExt, NoesisListOps, NoesisListPlugin, NoesisListSelection,
-    NoesisListSet, Selected, UiList,
+    ListRows, ListSort, ListedIn, NoesisListAppExt, NoesisListOps, NoesisListPlugin,
+    NoesisListSelection, NoesisListSet, NoesisRowSelected, Selected, UiList,
 };
 pub use markup::{NoesisMarkupExtensionPlugin, NoesisMarkupExtensionRegistry};
 /// Derive macro for [`NoesisViewModel`]: binds a plain struct's fields by name.

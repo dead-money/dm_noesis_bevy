@@ -6,6 +6,29 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **`UiList` is now its own entity (breaking).** A list no longer rides on the
+  `NoesisView`; it is a distinct entity that names the view it renders into, so a
+  single view can bind any number of `ListBox`es. Spawn `UiList::new(view, "Name")`
+  on its own entity and attach rows to *that* entity via `ListedIn(list)`. Migrate:
+
+  ```rust
+  // before
+  commands.entity(view).insert(UiList::new("Inventory"));
+  commands.spawn((Item { /* … */ }, ListedIn(view)));
+
+  // after
+  let list = commands.spawn(UiList::new(view, "Inventory")).id();
+  commands.spawn((Item { /* … */ }, ListedIn(list)));
+  ```
+
+  `ListedIn` is now a Bevy relationship (its `ListRows` target on the list entity
+  tracks membership automatically), and rows appear in `ListedIn`-insertion order
+  (for the usual append-as-you-spawn pattern, unchanged). A UI selection now also
+  triggers a `NoesisRowSelected` `EntityEvent` on the selected row entity, alongside
+  the existing buffered `NoesisListSelection` message.
+
 ## [0.13.0] - 2026-07-02
 
 ### Changed

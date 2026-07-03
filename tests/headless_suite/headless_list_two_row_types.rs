@@ -75,9 +75,9 @@ fn two_row_types_do_not_clobber_each_others_lists() {
                         size: UVec2::new(256, 256),
                         ..default()
                     },
-                    UiList::new("List"),
                 ))
                 .id();
+            let list_a = commands.spawn(UiList::new(view_a, "List")).id();
             let view_b = commands
                 .spawn((
                     Camera2d,
@@ -87,32 +87,32 @@ fn two_row_types_do_not_clobber_each_others_lists() {
                         size: UVec2::new(256, 256),
                         ..default()
                     },
-                    UiList::new("List"),
                 ))
                 .id();
+            let list_b = commands.spawn(UiList::new(view_b, "List")).id();
 
-            commands.spawn((RowA { label: "a1".into() }, ListedIn(view_a)));
-            commands.spawn((RowA { label: "a2".into() }, ListedIn(view_a)));
+            commands.spawn((RowA { label: "a1".into() }, ListedIn(list_a)));
+            commands.spawn((RowA { label: "a2".into() }, ListedIn(list_a)));
             commands.spawn((
                 RowB {
                     name: "b1".into(),
                     weight: 1,
                 },
-                ListedIn(view_b),
+                ListedIn(list_b),
             ));
             commands.spawn((
                 RowB {
                     name: "b2".into(),
                     weight: 2,
                 },
-                ListedIn(view_b),
+                ListedIn(list_b),
             ));
             commands.spawn((
                 RowB {
                     name: "b3".into(),
                     weight: 3,
                 },
-                ListedIn(view_b),
+                ListedIn(list_b),
             ));
 
             *views_startup.lock().unwrap() = Some((view_a, view_b));

@@ -658,6 +658,13 @@ pub(crate) struct NoesisRenderState {
     /// collection→instances→registration order its fields encode. See
     /// [`crate::list`].
     lists: HashMap<(Entity, String), crate::list::ListBinding>,
+    /// Maps each live [`UiList`](crate::list::UiList) *entity* to the `(view, name)`
+    /// key its binding lives under in [`Self::lists`]. A [`UiList`] lives on its own
+    /// entity but its render binding is keyed by the view it renders into, so a
+    /// component-removal reap (which only knows the list entity) needs this to find
+    /// the right binding. Recorded each apply, pruned on the list's / view's
+    /// teardown; plain `Send` data, no Noesis handles.
+    list_owners: HashMap<Entity, (Entity, String)>,
     /// Process-global integration callback guards (cursor / open-URL /
     /// play-audio) registered once by [`crate::integration::NoesisIntegrationPlugin`].
     /// Owned here (rather than in that plugin's own resource) so their `Drop`
@@ -1070,6 +1077,7 @@ impl NoesisRenderState {
             panels: HashMap::new(),
             failed_fragments: HashSet::new(),
             lists: HashMap::new(),
+            list_owners: HashMap::new(),
             integration_guards: Vec::new(),
         }
     }
@@ -1441,7 +1449,8 @@ impl NoesisRenderState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_list_for(
         &mut self,
-        entity: Entity,
+        list_ent: Entity,
+        view: Entity,
         name: &str,
         class: &str,
         schema: &[(&'static str, crate::plain_vm::PlainType)],
@@ -1449,7 +1458,10 @@ impl NoesisRenderState {
         desired_selected: Option<Entity>,
         click_queue: &SharedClickQueue,
     ) -> (crate::list::ListOps, crate::list::SelectionOutcome) {
-        let key = (entity, name.to_owned());
+        let key = (view, name.to_owned());
+        // Remember which (view, name) this list entity's binding lives under, so a
+        // later `UiList` removal (which only carries the list entity) can reap it.
+        self.list_owners.insert(list_ent, key.clone());
         let ops = {
             let binding = self.lists.entry(key.clone()).or_default();
             binding.reconcile_into(class, schema, desired)
@@ -1460,7 +1472,7 @@ impl NoesisRenderState {
         // before the `lists` mutable borrow (disjoint fields).
         let mount = self
             .scenes
-            .get(&entity)
+            .get(&view)
             .and_then(|s| s.view.content().map(|c| (c, s.built_for_uri.clone())));
         if let Some((content, uri)) = mount
             && self.lists.get(&key).is_some_and(|b| b.needs_bind(&uri))
@@ -1481,7 +1493,7 @@ impl NoesisRenderState {
                         ok
                     };
                     if bound {
-                        self.install_row_click_sub(entity, name, &element, click_queue);
+                        self.install_row_click_sub(view, name, &element, click_queue);
                     } else {
                         warn!("UiList: element {name:?} is not an ItemsControl; skipped");
                     }
@@ -4657,6 +4669,10 @@ impl NoesisRenderState {
         self.view_models.remove(&entity);
         self.items_sources.retain(|(ent, _), _| *ent != entity);
         self.lists.retain(|(ent, _), _| *ent != entity);
+        // Drop the list-entity → (view, name) map entries for every list this view
+        // owned, so a later `UiList`-removal reap (fired when `despawn_orphan_lists`
+        // despawns those list entities) finds nothing and no-ops.
+        self.list_owners.retain(|_, (v, _)| *v != entity);
         self.plain_vms.retain(|(ent, _), _| *ent != entity);
         self.command_hosts.remove(&entity);
         self.warned_host_build_failures
@@ -4824,19 +4840,27 @@ impl NoesisRenderState {
         self.items_sources.retain(|(ent, _), _| *ent != entity);
     }
 
-    /// Reap view `entity`'s [`UiList`](crate::list::UiList) bindings: detach each
-    /// list's `ItemsSource` off its cached control (same use-after-free rule as
-    /// [`Self::reap_items_for`]), drop the bindings, and drop the per-row click
-    /// subscriptions parked in the still-live scene.
-    pub(crate) fn reap_list_for(&mut self, entity: Entity) {
-        for ((ent, _), binding) in &mut self.lists {
-            if *ent == entity {
-                binding.detach();
-            }
+    /// Reap the single [`UiList`](crate::list::UiList) binding owned by list entity
+    /// `list_ent`: detach its `ItemsSource` off the cached control (same
+    /// use-after-free rule as [`Self::reap_items_for`]), drop the binding, and drop
+    /// its per-row click subscription parked in the still-live scene. Keyed through
+    /// [`Self::list_owners`] because the binding lives under `(view, name)` while the
+    /// removal only carries the list entity. No-op (idempotent with the view's
+    /// terminal [`Self::teardown_for`], which prunes `list_owners` first) when the
+    /// list entity is untracked — e.g. a list despawned in the wake of its view.
+    pub(crate) fn reap_list_for(&mut self, list_ent: Entity) {
+        let Some((view, name)) = self.list_owners.remove(&list_ent) else {
+            return;
+        };
+        let key = (view, name.clone());
+        if let Some(binding) = self.lists.get_mut(&key) {
+            binding.detach();
         }
-        self.lists.retain(|(ent, _), _| *ent != entity);
-        if let Some(scene) = self.scenes.get_mut(&entity) {
-            scene.row_click_subs.clear();
+        self.lists.remove(&key);
+        // Drop only *this* list's per-row click subscription; a view can host other
+        // lists whose subscriptions must survive.
+        if let Some(scene) = self.scenes.get_mut(&view) {
+            scene.row_click_subs.remove(&name);
         }
     }
 

@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/noesis_bevy.svg)](https://crates.io/crates/noesis_bevy)
 [![docs.rs](https://img.shields.io/docsrs/noesis_bevy)](https://docs.rs/noesis_bevy)
 
-A Bevy 0.18 plugin that renders [Noesis GUI](https://www.noesisengine.com/) XAML-driven UI into your frame. Noesis draws the scene on Bevy's own GPU; the plugin composites the result onto a camera.
+A Bevy 0.19 plugin that renders [Noesis GUI](https://www.noesisengine.com/) XAML-driven UI into your frame. Noesis draws the scene on Bevy's own GPU; the plugin composites the result onto a camera.
 
 It builds on the FFI crate [`noesis_runtime`](https://github.com/dead-money/noesis_runtime), which wraps the C++ SDK. All `unsafe` lives there. This crate has none of its own and sets `#![forbid(unsafe_code)]`.
 
@@ -29,8 +29,8 @@ Set `NOESIS_LICENSE_NAME` and `NOESIS_LICENSE_KEY` to apply your license. Withou
 
 ```toml
 [dependencies]
-bevy = "0.18"
-noesis_bevy = "0.10"
+bevy = "0.19"
+noesis_bevy = "0.13"
 ```
 
 It links the Noesis SDK at build time, so you need `NOESIS_SDK_DIR` set (see above) to compile.
@@ -104,14 +104,14 @@ fn regen(mut q: Query<&mut Health, With<UiPanel>>) {
 
 Two panels of the same type bind independently. Show and hide is a `String` field bound to `Visibility` (`visibility::{VISIBLE, COLLAPSED, HIDDEN}`), with no converter.
 
-**List = query.** A list's rows are entities. Tag an entity into a list and it appears as a row; the bound `ObservableCollection` is reconciled by `Entity`, so mutating one component updates only its row and selection survives a reorder:
+**List = query.** A list is its own entity naming the view it renders into; its rows are entities too. Tag an entity into a list and it appears as a row; the bound `ObservableCollection` is reconciled by `Entity`, so mutating one component updates only its row and selection survives a reorder. One view can own any number of lists:
 
 ```rust
 #[derive(Component, NoesisViewModel, Clone)]
 struct Item { name: String, qty: i32 }
 
-commands.entity(view).insert(UiList::new("Inventory"));
-commands.spawn((Item { name: "Potion".into(), qty: 3 }, ListedIn(view)));
+let list = commands.spawn(UiList::new(view, "Inventory")).id();
+commands.spawn((Item { name: "Potion".into(), qty: 3 }, ListedIn(list)));
 ```
 
 The selected row carries a `Selected` marker, read back with `Query<&Item, With<Selected>>`.

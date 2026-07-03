@@ -1,6 +1,10 @@
 //! Despawn-teardown regression for **Primitive 2 (list = query)**: despawning a
-//! [`NoesisView`] that owns a [`UiList`] must reap that view's `ListBinding`, not
-//! leak it.
+//! [`NoesisView`] that owns a [`UiList`] must reap that view's `ListBinding` *and*
+//! despawn the (now-separate) list entity, not leak either.
+//!
+//! Since the list is its own entity (naming its view), despawning the view does not
+//! despawn the list entity automatically; `despawn_orphan_lists` does. This asserts
+//! both halves: the render `ListBinding` drains and the `UiList` entity is gone.
 //!
 //! A `ListBinding` holds Noesis refcounted state in a strict drop order: the
 //! `ObservableCollection` (releasing its refs to the row instances) → each realized
@@ -50,6 +54,8 @@ struct Row {
 fn despawning_a_list_owning_view_reaps_its_binding() {
     let pre: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
     let post: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+    // Count of live UiList entities after despawn; despawn_orphan_lists must drain it.
+    let post_list_entities: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
 
     let mut app = headless_app();
     app.add_noesis_list::<Row>();
@@ -70,8 +76,10 @@ fn despawning_a_list_owning_view_reaps_its_binding() {
                         size: UVec2::new(256, 256),
                         ..default()
                     },
-                    UiList::new("Inv").sorted_by(1, false),
                 ))
+                .id();
+            let list = commands
+                .spawn(UiList::new(view, "Inv").sorted_by(1, false))
                 .id();
             for (label, weight) in [("A", 1), ("B", 2), ("C", 3)] {
                 commands.spawn((
@@ -79,7 +87,7 @@ fn despawning_a_list_owning_view_reaps_its_binding() {
                         label: label.into(),
                         weight,
                     },
-                    ListedIn(view),
+                    ListedIn(list),
                 ));
             }
         },
@@ -87,33 +95,41 @@ fn despawning_a_list_owning_view_reaps_its_binding() {
 
     let pre_sys = Arc::clone(&pre);
     let post_sys = Arc::clone(&post);
+    let post_ents_sys = Arc::clone(&post_list_entities);
     app.add_systems(
         Update,
         move |diag: Res<NoesisDiagnostics>,
               views: Query<Entity, With<NoesisView>>,
+              lists: Query<(), With<UiList>>,
               mut commands: Commands| {
             // Phase 0 (pre == None): wait for the binding to go live, snapshot the
-            // live count, then despawn the view. Phase 1: track the drained count.
+            // live count, then despawn the view. Phase 1: track the drained counts.
             if pre_sys.lock().unwrap().is_none() {
                 if diag.live_lists >= 1 {
                     *pre_sys.lock().unwrap() = Some(diag.live_lists);
-                    // Despawn the list-owning view; teardown must reap its ListBinding.
+                    // Despawn the view alone; teardown reaps its ListBinding and
+                    // despawn_orphan_lists takes the list entity with it.
                     for e in &views {
                         commands.entity(e).despawn();
                     }
                 }
             } else {
                 *post_sys.lock().unwrap() = Some(diag.live_lists);
+                *post_ents_sys.lock().unwrap() = Some(lists.iter().count());
             }
         },
     );
 
-    // Exit once the binding has gone live (pre captured) and, after despawn, the
-    // live-list count has drained back to 0 (binding reaped in refcount order).
+    // Exit once the binding has gone live (pre captured) and, after despawn, both the
+    // live-list binding count and the UiList entity count drained to 0 (binding
+    // reaped in refcount order; list entity despawned with its view).
     let pred_pre = Arc::clone(&pre);
     let pred_post = Arc::clone(&post);
+    let pred_post_ents = Arc::clone(&post_list_entities);
     let drained = run_until(&mut app, 160, move |_app| {
-        *pred_pre.lock().unwrap() == Some(1) && *pred_post.lock().unwrap() == Some(0)
+        *pred_pre.lock().unwrap() == Some(1)
+            && *pred_post.lock().unwrap() == Some(0)
+            && *pred_post_ents.lock().unwrap() == Some(0)
     });
 
     let pre = pre
@@ -141,5 +157,15 @@ fn despawning_a_list_owning_view_reaps_its_binding() {
     assert_eq!(
         post, 0,
         "despawn must reap the view's list binding; {post} live lists still tracked",
+    );
+    // After despawn: despawn_orphan_lists took the list entity with the view.
+    let post_ents = post_list_entities
+        .lock()
+        .unwrap()
+        .expect("post-despawn list-entity count captured");
+    assert_eq!(
+        post_ents, 0,
+        "despawning the view must despawn its list entities; {post_ents} UiList \
+         entities still live",
     );
 }

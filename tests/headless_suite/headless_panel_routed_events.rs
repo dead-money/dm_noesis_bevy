@@ -63,12 +63,9 @@ fn event_watch_on_panel_entity_resolves_fragment_internal_name() {
 
     let obs = Arc::clone(&observed);
     app.add_observer(move |on: On<UiRoutedEvent>| {
-        obs.lock().unwrap().push((
-            on.event_target(),
-            on.view,
-            on.name.clone(),
-            on.event,
-        ));
+        obs.lock()
+            .unwrap()
+            .push((on.event_target(), on.view, on.name.clone(), on.event));
     });
 
     let ids_startup = Arc::clone(&ids);

@@ -4091,13 +4091,16 @@ impl NoesisRenderState {
     /// through the live application resources, sorted — only when this call
     /// actually (re)installed; `None` when the merged inputs are unchanged since
     /// the last install or when a `chain_uris` entry hasn't reached the XAML
-    /// provider yet (retried next frame). Called from the `Sync` phase (before
-    /// scene build) so a scene's `{StaticResource}` resolves at parse time.
+    /// provider (or a `wait_fonts`/`wait_font_files` entry the font map) yet
+    /// (retried next frame). Called from the `Sync` phase (before scene build)
+    /// so a scene's `{StaticResource}` resolves at parse time.
     pub(crate) fn reconcile_app_resources(
         &mut self,
         entries: &HashMap<String, crate::resources::ResourceEntry>,
         merged_xaml: &[String],
         chain_uris: &[String],
+        wait_fonts: &[String],
+        wait_font_files: &[(String, String)],
     ) -> Option<Vec<String>> {
         use crate::brushes::BrushSpec;
         use crate::resources::ResourceEntry;
@@ -4132,6 +4135,25 @@ impl NoesisRenderState {
                 return None;
             }
         }
+
+        // Gate on the views' declared fonts too, like scene build: chain
+        // dictionaries resolve `FontFamily` at parse time and Noesis caches a
+        // miss forever, blanking all themed text.
+        {
+            let guard = self.shared_fonts.0.lock().expect("SharedFontMap poisoned");
+            for folder in wait_fonts {
+                if !guard.keys().any(|(f, _)| f == folder) {
+                    return None;
+                }
+            }
+            for pair in wait_font_files {
+                if !guard.contains_key(pair) {
+                    return None;
+                }
+            }
+        }
+        // Hand the synced fonts to the C++ provider before any chain leaf parses.
+        self.register_pending_fonts();
 
         // Install the parent first, then compose into it: `set_source` on each
         // chain leaf parses against every scope already reachable from the parent,
@@ -5261,7 +5283,7 @@ pub(crate) fn sync_xaml_provider_map(
 /// before any later XAML lookup (or `FontFamily` change at runtime) tries
 /// to resolve them.
 #[allow(clippy::needless_pass_by_value)]
-fn sync_font_provider_map(
+pub(crate) fn sync_font_provider_map(
     registry: Option<Res<FontRegistry>>,
     state: Option<NonSendMut<NoesisRenderState>>,
 ) {

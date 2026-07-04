@@ -58,7 +58,9 @@ use bevy::prelude::*;
 
 use crate::brushes::BrushSpec;
 use crate::dp::DpValue;
-use crate::render::{NoesisRenderState, NoesisSet, NoesisView, sync_xaml_provider_map};
+use crate::render::{
+    NoesisRenderState, NoesisSet, NoesisView, sync_font_provider_map, sync_xaml_provider_map,
+};
 
 /// One application-resource entry, declarative side. Resolved into a live
 /// `Noesis::BaseComponent` only at install time (on the Noesis thread), so the
@@ -182,9 +184,13 @@ pub(crate) fn sync_resources_bridge(
 
     // Union the views' chains (deduped, first-seen order). With merged-dictionary
     // semantics several views can share one global set of resources; warn once if
-    // views declare *different* chains, since the global is process-wide.
+    // views declare *different* chains, since the global is process-wide. The font
+    // waits are unioned alongside — the install honors the same gates as scene
+    // build (see `reconcile_app_resources`).
     let mut chain_uris: Vec<String> = Vec::new();
     let mut distinct_chains: Vec<&[String]> = Vec::new();
+    let mut wait_fonts: Vec<String> = Vec::new();
+    let mut wait_font_files: Vec<(String, String)> = Vec::new();
     for view in &views {
         if view.application_resources.is_empty() {
             continue;
@@ -195,6 +201,16 @@ pub(crate) fn sync_resources_bridge(
         for uri in &view.application_resources {
             if !chain_uris.contains(uri) {
                 chain_uris.push(uri.clone());
+            }
+        }
+        for folder in &view.wait_for_fonts {
+            if !wait_fonts.contains(folder) {
+                wait_fonts.push(folder.clone());
+            }
+        }
+        for pair in &view.wait_for_font_files {
+            if !wait_font_files.contains(pair) {
+                wait_font_files.push(pair.clone());
             }
         }
     }
@@ -210,9 +226,13 @@ pub(crate) fn sync_resources_bridge(
     let empty = NoesisResources::default();
     let resources = resources.as_deref().unwrap_or(&empty);
 
-    if let Some(present) =
-        state.reconcile_app_resources(&resources.entries, &resources.merged_xaml, &chain_uris)
-    {
+    if let Some(present) = state.reconcile_app_resources(
+        &resources.entries,
+        &resources.merged_xaml,
+        &chain_uris,
+        &wait_fonts,
+        &wait_font_files,
+    ) {
         // The read-back is the code-built bridge's "look up" half; only surface it
         // when the consumer actually declared code-built resources.
         if !resources.entries.is_empty() {
@@ -234,7 +254,11 @@ impl Plugin for NoesisResourcesPlugin {
                 .in_set(NoesisSet::Sync)
                 // The provider map must hold the chain URIs before we read their
                 // bytes to build the merged dictionary.
-                .after(sync_xaml_provider_map),
+                .after(sync_xaml_provider_map)
+                // And the frame's fonts must reach the C++ provider first —
+                // unordered, a rebuild can flip the two Sync systems and
+                // install the theme against an empty font cache.
+                .after(sync_font_provider_map),
         );
     }
 }

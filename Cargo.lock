@@ -3507,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "noesis_bevy"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "bevy",
  "bevy_render",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "noesis_bevy_derive"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3534,9 +3534,9 @@ dependencies = [
 
 [[package]]
 name = "noesis_runtime"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbe34818f268ce98203b9540b8d82cc35603f30605b8d684a984812b98a5ec80"
+checksum = "38ae4c2d9eb792262a5bc29bcd74f2040b1ddff8d1e0b391e27345614476e6bf"
 dependencies = [
  "cc",
 ]

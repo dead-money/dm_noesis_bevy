@@ -15,6 +15,7 @@ pub mod bake;
 pub mod binding;
 pub mod brushes;
 pub mod classes;
+pub mod clip;
 pub mod commands;
 pub mod diagnostics;
 pub mod dp;
@@ -66,6 +67,7 @@ pub use brushes::{
     NoesisBrushesPlugin,
 };
 pub use classes::{NoesisClassPlugin, NoesisClassRegistry};
+pub use clip::{NoesisClip, NoesisClipPlugin};
 pub use commands::{
     CommandForwarder, CommandsDef, NoesisCommandInvoked, NoesisCommands, NoesisCommandsPlugin,
     SharedCommandQueue,
@@ -229,6 +231,7 @@ impl NoesisPlugin {
             text::NoesisTextPlugin,
             inlines::NoesisInlinesPlugin,
             geometry::NoesisGeometryPlugin,
+            clip::NoesisClipPlugin,
         ));
         // Group B: interaction + data bridges. New bridges append here.
         app.add_plugins((

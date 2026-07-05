@@ -6,6 +6,16 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-07-05
+
+### Added
+
+- `NoesisClip`: a per-view clip bridge that assigns an imperative polygon clip to
+  any named element (points in the element's own space; an empty polygon clears
+  the clip), applied on change like the transform and geometry bridges. Rewriting
+  the polygon each frame animates a moving clip region. Needs `noesis_runtime`
+  0.12.1 (`set_clip_points`).
+
 ## [0.14.0] - 2026-07-02
 
 ### Changed
@@ -180,7 +190,8 @@ in a one-UI app, and a `NoesisView` auto-attaches the bridges so a value set bef
 the scene exists lands once it builds. The version starts at 0.10.0 to move in step
 with `noesis_runtime`.
 
-[Unreleased]: https://github.com/dead-money/noesis_bevy/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/dead-money/noesis_bevy/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/dead-money/noesis_bevy/compare/v0.14.0...v0.14.1
 [0.11.2]: https://github.com/dead-money/noesis_bevy/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/dead-money/noesis_bevy/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dead-money/noesis_bevy/compare/v0.10.0...v0.11.0

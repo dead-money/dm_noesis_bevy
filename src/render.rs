@@ -3148,6 +3148,49 @@ impl NoesisRenderState {
         }
     }
 
+    /// Assign each named element's clip to its desired polygon (element-local
+    /// coordinates; an empty polygon clears the clip). Mirrors
+    /// [`apply_geometry_for`](Self::apply_geometry_for), resolving names in the
+    /// panel's private namescope or the view's content tree.
+    pub(crate) fn apply_clip_for(
+        &mut self,
+        entity: Entity,
+        desired: &HashMap<String, Vec<[f32; 2]>>,
+    ) {
+        if desired.is_empty() {
+            return;
+        }
+        let Some(scene) = self.scenes.get_mut(&entity) else {
+            if let Some(panel) = self.panels.get(&entity) {
+                for (name, points) in desired {
+                    let Some(mut element) = resolve_named(&panel.fragment, name) else {
+                        warn!("NoesisClip: x:Name {name:?} not found in panel fragment");
+                        continue;
+                    };
+                    if !element.set_clip_points(points) {
+                        warn!("NoesisClip: element {name:?} clip not set (degenerate points)");
+                    }
+                }
+            }
+            return;
+        };
+        let Some(content) = scene.view.content() else {
+            return;
+        };
+        for (name, points) in desired {
+            let Some(mut element) = resolve_named(&content, name) else {
+                warn!(
+                    "NoesisClip: x:Name {:?} not found in scene {:?}",
+                    name, scene.built_for_uri,
+                );
+                continue;
+            };
+            if !element.set_clip_points(points) {
+                warn!("NoesisClip: element {name:?} clip not set (degenerate points)");
+            }
+        }
+    }
+
     /// Build view `entity`'s desired code-built shapes (`x:Name → spec`) and
     /// assign each to its named container element. Each spec becomes a fresh
     /// Noesis `Rectangle`/`Ellipse`/`Line` (size, corner radii, optional solid

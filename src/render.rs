@@ -4331,9 +4331,11 @@ impl NoesisRenderState {
                 && s.merged_xaml == merged_xaml
                 && s.chain_uris == chain_uris
                 && s.chain_bytes.len() == current_chain_bytes.len()
-                && s.chain_bytes
-                    .iter()
-                    .all(|(k, v)| current_chain_bytes.get(k).is_some_and(|o| Arc::ptr_eq(v, o)))
+                && s.chain_bytes.iter().all(|(k, v)| {
+                    current_chain_bytes
+                        .get(k)
+                        .is_some_and(|o| Arc::ptr_eq(v, o))
+                })
         }) {
             return None;
         }

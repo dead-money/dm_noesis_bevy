@@ -422,10 +422,7 @@ fn load_scenes_into_registry(viewer: Res<Viewer>, mut registry: ResMut<XamlRegis
 /// with `cargo run --example xaml_viewer --features hot_reload <path>`.
 #[cfg(feature = "hot_reload")]
 #[allow(clippy::needless_pass_by_value)]
-fn register_hot_reload(
-    viewer: Res<Viewer>,
-    hot: Option<Res<noesis_bevy::NoesisHotReload>>,
-) {
+fn register_hot_reload(viewer: Res<Viewer>, hot: Option<Res<noesis_bevy::NoesisHotReload>>) {
     let Some(hot) = hot else {
         return;
     };

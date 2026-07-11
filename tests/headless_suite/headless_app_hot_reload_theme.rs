@@ -54,7 +54,10 @@ fn theme_reload_restyles_live_view() {
         Startup,
         move |mut commands: Commands, mut reg: ResMut<XamlRegistry>| {
             reg.insert(VIEW_URI.to_string(), Arc::new(VIEW.as_bytes().to_vec()));
-            reg.insert(THEME_URI.to_string(), Arc::new(theme("THEME ONE").into_bytes()));
+            reg.insert(
+                THEME_URI.to_string(),
+                Arc::new(theme("THEME ONE").into_bytes()),
+            );
             let view = commands
                 .spawn((
                     Camera2d,
@@ -83,7 +86,10 @@ fn theme_reload_restyles_live_view() {
             // Edit only the theme dictionary; the view's own bytes and the URI
             // list are unchanged — only the byte-keyed check catches this.
             if *frame == RELOAD_AT_FRAME {
-                reg.insert(THEME_URI.to_string(), Arc::new(theme("THEME TWO").into_bytes()));
+                reg.insert(
+                    THEME_URI.to_string(),
+                    Arc::new(theme("THEME TWO").into_bytes()),
+                );
             }
 
             for ev in changes.read() {

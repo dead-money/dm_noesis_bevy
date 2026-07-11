@@ -54,7 +54,10 @@ fn panel_fragment_reload_rebuilds_fragment_tree() {
         Startup,
         move |mut commands: Commands, mut reg: ResMut<XamlRegistry>| {
             reg.insert(HOST_URI.to_string(), Arc::new(HOST.as_bytes().to_vec()));
-            reg.insert(FRAG_URI.to_string(), Arc::new(fragment("FRAG ONE").into_bytes()));
+            reg.insert(
+                FRAG_URI.to_string(),
+                Arc::new(fragment("FRAG ONE").into_bytes()),
+            );
             let view = commands
                 .spawn((
                     Camera2d,
@@ -68,7 +71,9 @@ fn panel_fragment_reload_rebuilds_fragment_tree() {
                 .id();
             let panel = commands
                 .spawn((
-                    UiPanel::new(FRAG_URI).mount_into(view, SLOT).static_context(),
+                    UiPanel::new(FRAG_URI)
+                        .mount_into(view, SLOT)
+                        .static_context(),
                     NoesisPanelText::new().watching([FRAG_NAME]),
                 ))
                 .id();
@@ -87,7 +92,10 @@ fn panel_fragment_reload_rebuilds_fragment_tree() {
             // Edit only the fragment file; the host scene is untouched. A fresh
             // Arc is what the fragment's re-parse guard compares against.
             if *frame == RELOAD_AT_FRAME {
-                reg.insert(FRAG_URI.to_string(), Arc::new(fragment("FRAG TWO").into_bytes()));
+                reg.insert(
+                    FRAG_URI.to_string(),
+                    Arc::new(fragment("FRAG TWO").into_bytes()),
+                );
             }
 
             for ev in changes.read() {

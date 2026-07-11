@@ -295,9 +295,10 @@ mod tests {
         app.init_resource::<XamlRegistry>();
         let hot = NoesisHotReload::new().expect("watcher");
         // Seed the registry the way an app's initial load would.
-        app.world_mut()
-            .resource_mut::<XamlRegistry>()
-            .insert("live.xaml", std::sync::Arc::new(b"<Grid Background=\"Red\"/>".to_vec()));
+        app.world_mut().resource_mut::<XamlRegistry>().insert(
+            "live.xaml",
+            std::sync::Arc::new(b"<Grid Background=\"Red\"/>".to_vec()),
+        );
         hot.watch("live.xaml", &file);
         app.insert_resource(hot);
         app.add_systems(Update, poll_hot_reload);
@@ -310,7 +311,8 @@ mod tests {
         for _ in 0..50 {
             app.update();
             let registry = app.world().resource::<XamlRegistry>();
-            if registry.get("live.xaml").map(|b| b.as_slice()) == Some(b"<Grid Background=\"Blue\"/>")
+            if registry.get("live.xaml").map(|b| b.as_slice())
+                == Some(b"<Grid Background=\"Blue\"/>")
             {
                 reloaded = true;
                 break;

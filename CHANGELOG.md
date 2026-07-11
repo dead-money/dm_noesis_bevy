@@ -6,6 +6,21 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-07-11
+
+### Fixed
+
+- **Adding an image to `ImageRegistry` no longer rebuilds every live scene.**
+  The image hot-reload epoch bumped on any registry change — including a newly
+  *added* URI and a change in entry count — so an app that stages procedural
+  images at runtime (e.g. palette-preview thumbnails trickling in one per frame)
+  rebuilt every view, every frame. A newly added URI cannot affect an
+  already-built scene (nothing referenced it at build time), and a removed URI
+  stays cached in Noesis, so only an in-place byte replacement of an
+  already-present URI now bumps the epoch and forces the rebuild that genuine
+  image hot-reload needs. Regression test:
+  `headless_app_hot_reload_image_add`.
+
 ## [0.15.0] - 2026-07-11
 
 ### Added

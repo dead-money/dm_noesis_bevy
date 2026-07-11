@@ -25,6 +25,15 @@ runtime/FFI work first are in §4.
 - **More SDK conformance examples.** Port additional Noesis samples as faithful in-crate `examples/` —
   the real sample XAML/assets loaded from `$NOESIS_SDK_DIR` at runtime, data driven through the bridge
   components — to demonstrate our rendering/behavior matches the reference.
+- **Hot-reload follow-ups.** The `hot_reload` feature (`src/hot_reload.rs`) watches explicitly-registered
+  XAML files and re-inserts their bytes, which the render pipeline already turns into a view rebuild.
+  Still open: (a) *dependency tracking* — a view's `Source="…"` dictionaries are fetched through the
+  provider, not registered, so editing them doesn't reload the parent; walk `get_xaml_dependencies`
+  (already in the runtime) and watch each. (b) *fonts/images* — `FontRegistry`/`ImageRegistry` have no
+  reload path, and Noesis caches font-folder scans + missing-texture lookups, so a changed face/texture
+  needs a forced scene rebuild + re-register. (c) *`AssetServer` auto-wiring* — for `assets/`-rooted apps,
+  optionally derive watches from `AssetEvent`s (or lean on `bevy/file_watcher`) instead of explicit
+  `NoesisHotReload::watch` calls.
 
 ## 3. Platform
 

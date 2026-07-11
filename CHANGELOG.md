@@ -6,6 +6,31 @@ pre-1.0, any `0.x` release may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-11
+
+### Added
+
+- **`hot_reload` feature: live-edit the UI.** An opt-in, dev-only cargo feature
+  (off by default) that reloads the running UI when its source files change on
+  disk. It watches the files behind `XamlRegistry` with the `notify` crate (for
+  XAML loaded off the `assets/` root via `XamlRegistry::insert`) and enables
+  Bevy's `file_watcher` (for `AssetServer`-loaded XAML / images / fonts), then
+  turns a byte change into a targeted view rebuild. Coverage:
+  - a view's **root XAML**;
+  - transitive **`Source=` dictionaries** merged into a view or fragment — a
+    provider fetch-log records what each build pulled, so editing a shared
+    `ResourceDictionary` reloads every view that merged it;
+  - mounted **`UiPanel` fragments**, which re-parse and re-mount on edit;
+  - **images**, which re-size and repaint (the rebuild re-issues Noesis's
+    per-URI `LoadTexture`, which it otherwise caches);
+  - **application-resources / theme dictionaries** referenced through
+    `NoesisView.application_resources`, which reinstall and restyle live views.
+
+  Register files to watch with `NoesisHotReload::watch(uri, path)`; the
+  `xaml_viewer` example wires it up (run with `--features hot_reload`). Same-file
+  **font** reload is not yet supported — Noesis caches font faces process-globally
+  — though adding a *new* font file still works.
+
 ## [0.14.1] - 2026-07-05
 
 ### Added
@@ -190,7 +215,8 @@ in a one-UI app, and a `NoesisView` auto-attaches the bridges so a value set bef
 the scene exists lands once it builds. The version starts at 0.10.0 to move in step
 with `noesis_runtime`.
 
-[Unreleased]: https://github.com/dead-money/noesis_bevy/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/dead-money/noesis_bevy/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/dead-money/noesis_bevy/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/dead-money/noesis_bevy/compare/v0.14.0...v0.14.1
 [0.11.2]: https://github.com/dead-money/noesis_bevy/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/dead-money/noesis_bevy/compare/v0.11.0...v0.11.1

@@ -197,6 +197,42 @@ impl SharedXamlMap {
     }
 }
 
+/// Records every XAML URI (and the exact bytes served) that Noesis fetched
+/// through [`BevyXamlProvider`] during a scene build — the view's root plus its
+/// transitive `Source="…"` dependencies (merged `ResourceDictionary`s, nested
+/// dictionaries, and so on), since Noesis pulls all of them through the provider
+/// while parsing.
+///
+/// `NoesisRenderState` clones the handle and, around a build, calls
+/// [`begin`](Self::begin) then [`take`](Self::take) to capture the dependency
+/// set. It later rebuilds the scene whenever any captured dependency's `Arc`
+/// changes — the same pointer-identity trick that drives root hot-reload, so an
+/// edit to a shared dictionary reloads every view that pulled it.
+///
+/// Like [`SharedXamlMap`], the mutex is only ever touched on the main thread
+/// (the provider callback during a build, and `ensure_scene` around it), so it
+/// is never contended.
+#[derive(Clone, Default)]
+pub struct SharedFetchLog(pub(crate) Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>);
+
+impl SharedFetchLog {
+    /// Clear the log at the start of a build so [`take`](Self::take) returns
+    /// only what this build fetched.
+    pub fn begin(&self) {
+        self.0
+            .lock()
+            .expect("SharedFetchLog mutex poisoned")
+            .clear();
+    }
+
+    /// Drain the URIs fetched since [`begin`](Self::begin), as `uri → served
+    /// bytes`.
+    #[must_use]
+    pub fn take(&self) -> HashMap<String, Arc<Vec<u8>>> {
+        std::mem::take(&mut *self.0.lock().expect("SharedFetchLog mutex poisoned"))
+    }
+}
+
 /// Implements [`noesis_runtime::xaml_provider::XamlProvider`] against a
 /// [`SharedXamlMap`] that the plugin updates each frame from the
 /// [`XamlRegistry`].
@@ -208,6 +244,7 @@ impl SharedXamlMap {
 /// contract and keeps the lock untouched during the parse itself.
 pub struct BevyXamlProvider {
     shared: SharedXamlMap,
+    log: SharedFetchLog,
     current: Option<Arc<Vec<u8>>>,
 }
 
@@ -222,14 +259,23 @@ impl BevyXamlProvider {
         (Self::from_shared(shared.clone()), shared)
     }
 
-    /// Build a provider that shares `map` with an existing handle. Used by
-    /// the Bevy plugin so one `SharedXamlMap` lives both in `NoesisRenderState`
-    /// (for the sync system) and inside the boxed provider (for the
-    /// [`XamlProvider::load_xaml`] callback).
+    /// Build a provider that shares `map` with an existing handle, discarding
+    /// the dependency fetch-log. Convenience for tests and callers that don't
+    /// track dependencies; app wiring uses [`from_parts`](Self::from_parts).
     #[must_use]
     pub fn from_shared(map: SharedXamlMap) -> Self {
+        Self::from_parts(map, SharedFetchLog::default())
+    }
+
+    /// Build a provider that shares both a [`SharedXamlMap`] and a
+    /// [`SharedFetchLog`] with existing handles. Used by the Bevy plugin so
+    /// `NoesisRenderState` keeps its own clones — the map for the sync system,
+    /// the log so `ensure_scene` can read back a build's XAML dependencies.
+    #[must_use]
+    pub fn from_parts(map: SharedXamlMap, log: SharedFetchLog) -> Self {
         Self {
             shared: map,
+            log,
             current: None,
         }
     }
@@ -245,6 +291,13 @@ impl XamlProvider for BevyXamlProvider {
             let guard = self.shared.0.lock().expect("SharedXamlMap mutex poisoned");
             guard.get(uri).cloned()?
         };
+        // Record what this build pulled (root + transitive `Source=` deps) so
+        // `ensure_scene` can rebuild the view when any of them later changes.
+        self.log
+            .0
+            .lock()
+            .expect("SharedFetchLog mutex poisoned")
+            .insert(uri.to_string(), Arc::clone(&arc));
         self.current = Some(arc);
         self.current.as_deref().map(Vec::as_slice)
     }

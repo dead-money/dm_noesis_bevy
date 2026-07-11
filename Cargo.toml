@@ -1,6 +1,6 @@
 [package]
 name = "noesis_bevy"
-version = "0.14.1"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Brandon Reinhart <brandon@deadmoney.gg>"]
@@ -28,6 +28,14 @@ default = []
 # diagnostic; off by default so published consumers don't inherit Bevy's debug
 # overhead. Enable with `features = ["debug"]`.
 debug = ["bevy/debug"]
+# Live-edit UI: watch the files behind the registries and re-insert their bytes
+# on change, which the render pipeline turns into a view rebuild (including
+# transitive XAML `Source=` dependencies and image re-sizes). A development aid,
+# off by default. Pulls the `notify` crate (a watcher thread for XAML loaded off
+# the `assets/` root via `XamlRegistry::insert`) and Bevy's own `file_watcher`
+# (so `AssetServer`-loaded XAML/images/fonts refresh too). Enable with
+# `features = ["hot_reload"]`.
+hot_reload = ["dep:notify", "bevy/file_watcher"]
 
 [dependencies]
 bevy = "0.19"
@@ -35,7 +43,7 @@ bevy_render = "0.19"
 bytemuck = { version = "1.25", features = ["derive"] }
 # The derive crate ships in this repo and releases in lockstep (path for local
 # dev, version for the published crate).
-noesis_bevy_derive = { path = "./derive", version = "0.14" }
+noesis_bevy_derive = { path = "./derive", version = "0.15" }
 # The public crate from crates.io. This branch needs 0.12 (set_source and
 # clear_binding). Until 0.12 is published, a local `[patch.crates-io]` override
 # can build against the sibling checkout (see RELEASING.md).
@@ -46,6 +54,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # row instances in collection order, so it needs index-positioned insert / remove /
 # move alongside O(1) Entity lookup.
 indexmap = "2"
+# Filesystem watcher backing the optional `hot_reload` feature. Only compiled
+# when that feature is on (dev builds); release consumers never pull it.
+notify = { version = "8", optional = true }
 thiserror = "2"
 # Pinned to match Bevy 0.19's transitive wgpu version. Cargo dedupes them into a
 # single crate, so RenderDevice traits remain interchangeable between this

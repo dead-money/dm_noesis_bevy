@@ -25,6 +25,8 @@ pub mod focus_input;
 pub mod font;
 pub mod geometry;
 pub mod headless;
+#[cfg(feature = "hot_reload")]
+pub mod hot_reload;
 pub mod image;
 pub mod imaging;
 pub mod inlines;
@@ -86,6 +88,8 @@ pub use focus_input::{
 pub use font::{BevyFontProvider, FontAsset, FontAssetLoader, FontAssetPlugin, FontRegistry};
 pub use geometry::{NoesisGeometry, NoesisGeometryPlugin};
 pub use headless::NoesisHeadlessPlugin;
+#[cfg(feature = "hot_reload")]
+pub use hot_reload::{NoesisHotReload, NoesisHotReloadPlugin};
 pub use image::{
     BevyTextureProvider, ImageAsset, ImageAssetLoader, ImageAssetPlugin, ImageRegistry,
 };
@@ -275,6 +279,13 @@ impl Plugin for NoesisPlugin {
         // drop order between two main-world resources).
 
         Self::add_bridge_plugins(app);
+
+        // Opt-in live XAML editing. Kept out of `add_bridge_plugins` (the set
+        // the headless test harness shares) so tests never spin a filesystem
+        // watcher thread; only real apps building with `hot_reload` get it.
+        #[cfg(feature = "hot_reload")]
+        app.add_plugins(hot_reload::NoesisHotReloadPlugin);
+
         // NoesisRenderPlugin no-ops its render-sub-app half if RenderApp is
         // absent (headless), but its main-world driving pipeline still runs.
         app.add_plugins(render::NoesisRenderPlugin);

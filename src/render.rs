@@ -870,6 +870,14 @@ struct PanelEntry {
     event_subs: HashMap<(String, &'static str), EventSubscription>,
     /// The loaded sub-XAML, its own namescope. `DataContext` set once at build.
     fragment: FrameworkElement,
+    /// The XAML URIs this fragment pulled through the provider at build time —
+    /// its own uri plus any transitive `Source="…"` dependencies — mapped to the
+    /// exact `Arc<Vec<u8>>` served. [`NoesisRenderState::sync_panel`] re-parses
+    /// the fragment when the shared map's `Arc` for any of these changes, the
+    /// panel-side mirror of a scene's [`SceneInstance::built_deps`] (fragments
+    /// build outside `ensure_scene`, so they need their own guard). Set by the
+    /// caller from the shared [`SharedFetchLog`] right after [`Self::build`].
+    built_deps: HashMap<String, Arc<Vec<u8>>>,
     /// Aggregated plain-VM instance: one synthetic class whose properties are the
     /// union of the panel entity's bound components.
     instance: PlainInstance,
@@ -936,6 +944,9 @@ impl PanelEntry {
             keydown_subs: HashMap::new(),
             event_subs: HashMap::new(),
             fragment,
+            // Stamped by `sync_panel` from the fetch-log right after this build;
+            // `build` can't see the provider map, so it starts empty.
+            built_deps: HashMap::new(),
             instance,
             _class: class,
             prop_names,
@@ -1792,6 +1803,24 @@ impl NoesisRenderState {
         props: &[(String, PlainType)],
         pushes: &[(u32, PlainValue)],
     ) -> Vec<(u32, PlainValue)> {
+        // Fragment hot-reload: re-parse when the bytes this fragment built
+        // against change. `built_deps` holds the `Arc` served for the fragment's
+        // uri + its transitive `Source=` deps; if the shared map now holds a
+        // different `Arc` for any (or dropped it), tear the fragment down so the
+        // `Vacant` branch below rebuilds it against the new markup. The panel-side
+        // mirror of `ensure_scene`'s `deps_changed` guard — fragments build here,
+        // in the Apply phase, outside that scene-only window.
+        let fragment_stale = self.panels.get(&entity).is_some_and(|entry| {
+            let guard = self.shared_map.0.lock().expect("SharedXamlMap poisoned");
+            entry
+                .built_deps
+                .iter()
+                .any(|(u, arc)| guard.get(u).is_none_or(|cur| !Arc::ptr_eq(cur, arc)))
+        });
+        if fragment_stale {
+            self.teardown_panel_for(entity);
+        }
+
         if let std::collections::hash_map::Entry::Vacant(slot) = self.panels.entry(entity) {
             // F5b: a malformed-but-loadable fragment (e.g. a tag mismatch) loads as a
             // partial tree and only warns through Noesis's parser, so capture any error
@@ -1799,6 +1828,10 @@ impl NoesisRenderState {
             // error! rather than leaving a silent half-render.
             let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
             let captured = std::sync::Arc::clone(&sink);
+            // Capture the fragment's dependency set the same way scenes do: clear
+            // the provider fetch-log, load, then drain. Tightly scoped around the
+            // build so it records only this fragment's fetches.
+            self.fetch_log.begin();
             let built = {
                 let _guard = noesis_runtime::diagnostics::set_thread_error_handler(
                     move |_file, _line, message, _fatal, ctx| {
@@ -1812,9 +1845,11 @@ impl NoesisRenderState {
                 PanelEntry::build(uri, host, host_name, props)
                 // guard drops here, restoring the prior handler before any ECS access
             };
+            let built_deps = self.fetch_log.take();
             let warnings = std::mem::take(&mut *sink.lock().unwrap());
             match built {
-                Some(built) => {
+                Some(mut built) => {
+                    built.built_deps = built_deps;
                     slot.insert(built);
                     self.failed_fragments.remove(&(entity, uri.to_owned()));
                     if !warnings.is_empty() {

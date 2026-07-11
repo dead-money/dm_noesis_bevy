@@ -28,6 +28,7 @@ mod headless_app_focus_predict_remove;
 mod headless_app_hot_reload;
 mod headless_app_hot_reload_deps;
 mod headless_app_hot_reload_image;
+mod headless_app_hot_reload_image_add;
 mod headless_app_hot_reload_panel;
 mod headless_app_hot_reload_theme;
 mod headless_app_imaging;

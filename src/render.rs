@@ -2075,17 +2075,25 @@ impl NoesisRenderState {
     /// without it a hot-swapped image never reaches the screen. Compares the
     /// pre-sync map (old `Arc`s) against the registry (new) before overwriting.
     fn refresh_images(&mut self, registry: &ImageRegistry) {
+        // Only an in-place replacement of an *already-present* URI forces a
+        // rebuild: Noesis resolves an image source at parse time and caches it,
+        // so a scene that cached the old texture must re-`LoadTexture`. A newly
+        // *added* URI can't affect any live scene — none referenced it at build
+        // time (it didn't exist), and later builds read the current registry —
+        // and a removed URI stays cached in Noesis, so neither needs a rebuild.
+        // Guarding on `is_some_and` (URI existed) rather than length/`is_none_or`
+        // is what keeps steady per-frame staging (e.g. palette previews trickling
+        // in one per frame) from rebuilding every scene each frame.
         let changed = {
             let old = self
                 .shared_images
                 .0
                 .lock()
                 .expect("SharedImageMap poisoned");
-            old.len() != registry.entries.len()
-                || registry.entries.iter().any(|(uri, img)| {
-                    old.get(uri)
-                        .is_none_or(|prev| !Arc::ptr_eq(&prev.bytes, &img.bytes))
-                })
+            registry.entries.iter().any(|(uri, img)| {
+                old.get(uri)
+                    .is_some_and(|prev| !Arc::ptr_eq(&prev.bytes, &img.bytes))
+            })
         };
         if changed {
             self.image_epoch = self.image_epoch.wrapping_add(1);

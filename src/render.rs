@@ -490,6 +490,12 @@ struct AppResourcesSnapshot {
     entries: HashMap<String, crate::resources::ResourceEntry>,
     merged_xaml: Vec<String>,
     chain_uris: Vec<String>,
+    /// The `Arc` served for each chain URI at install time. The unchanged-check
+    /// compares these by pointer identity so an *in-place edit* of a chain
+    /// dictionary (same URI list, fresh bytes) triggers a reinstall — the
+    /// URI-list check alone would skip it. Enables theme/`App.Styles.xaml`
+    /// hot-reload.
+    chain_bytes: HashMap<String, Arc<Vec<u8>>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,6 +524,13 @@ pub(crate) struct NoesisRenderState {
     /// live edit only shows after a fresh `View` re-requests it; scenes stamp
     /// this at build time and `ensure_scene` rebuilds any whose stamp is stale.
     image_epoch: u64,
+    /// Bumped by [`Self::reconcile_app_resources`] whenever it *re*installs the
+    /// process-global application-resources dictionary (a chain dictionary's
+    /// bytes, the merged XAML, or the code-built entries changed) — not on the
+    /// first install. A scene resolves `{StaticResource}` against that dictionary
+    /// at parse time, so a live theme edit only shows after a rebuild; scenes
+    /// stamp this at build and `ensure_scene` rebuilds any whose stamp is stale.
+    app_resources_epoch: u64,
     // `Option` so `Drop` can take + drop each in the right order.
     registered_device: Option<noesis_runtime::render_device::Registered>,
     registered_provider: Option<noesis_runtime::xaml_provider::Registered>,
@@ -719,6 +732,11 @@ struct SceneInstance {
     /// moves past it (an image's bytes changed), `ensure_scene` rebuilds so the
     /// fresh `View` re-issues `LoadTexture` and picks up the new bytes.
     built_image_epoch: u64,
+    /// [`NoesisRenderState::app_resources_epoch`] at build time. When the live
+    /// epoch moves past it (a theme / application-resources dictionary was
+    /// reinstalled), `ensure_scene` rebuilds so `{StaticResource}` re-resolves
+    /// against the new global dictionary.
+    built_app_resources_epoch: u64,
     /// Last render flags written to the view via `View::set_flags`.
     /// Re-applied only when [`NoesisView`] changes; avoids the FFI call
     /// on every frame.
@@ -1093,6 +1111,7 @@ impl NoesisRenderState {
             shared_images,
             fetch_log,
             image_epoch: 0,
+            app_resources_epoch: 0,
             registered_device: Some(registered_device),
             registered_provider: Some(registered_provider),
             registered_fonts: Some(registered_fonts),
@@ -2141,8 +2160,19 @@ impl NoesisRenderState {
             .get(&entity)
             .is_some_and(|s| s.built_image_epoch != self.image_epoch);
 
+        // App-resources / theme hot-reload: the process-global resource
+        // dictionary was reinstalled (a chain dictionary's bytes changed) since
+        // this scene built. `{StaticResource}` is resolved at parse time, so the
+        // scene must rebuild to pick up the new values. Coarse like images — any
+        // reinstall rebuilds every live view, since the dictionary is global.
+        let app_resources_changed = self
+            .scenes
+            .get(&entity)
+            .is_some_and(|s| s.built_app_resources_epoch != self.app_resources_epoch);
+
         // Any of these signals forces a full teardown + rebuild, not a resize.
-        let needs_rebuild = bytes_changed || deps_changed || images_changed;
+        let needs_rebuild =
+            bytes_changed || deps_changed || images_changed || app_resources_changed;
 
         // Same URI + bytes, different size: resize in place without tearing
         // down the View. Rebuild just the intermediate texture; `View::set_size`
@@ -2311,6 +2341,7 @@ impl NoesisRenderState {
                 built_bytes: current_bytes,
                 built_deps,
                 built_image_epoch: self.image_epoch,
+                built_app_resources_epoch: self.app_resources_epoch,
                 applied_flags: initial_flags,
                 applied_scale: config.scale,
                 click_subs: HashMap::new(),
@@ -4278,12 +4309,31 @@ impl NoesisRenderState {
             return None;
         }
 
+        // The `Arc` the provider currently holds for each chain URI, so the
+        // unchanged-check can spot an in-place edit (same URI list, fresh bytes)
+        // by pointer identity — `update_xaml_registry`/`insert` allocate a new
+        // `Arc` on a byte change. Cheap: a lock + one `Arc` clone per chain URI.
+        let current_chain_bytes: HashMap<String, Arc<Vec<u8>>> = {
+            let guard = self.shared_map.0.lock().expect("SharedXamlMap poisoned");
+            chain_uris
+                .iter()
+                .filter_map(|uri| guard.get(uri).map(|b| (uri.clone(), Arc::clone(b))))
+                .collect()
+        };
+
         // Cheap unchanged-check first: this runs every frame, so bail before
-        // locking the provider map or cloning the spec when nothing changed.
-        // (Keyed on the URI *list*, like the previous chain installer — an
-        // in-place hot-reload of a chain dictionary's bytes isn't reinstalled.)
+        // cloning the spec or building the dictionary when nothing changed. Keyed
+        // on the code-built inputs, the URI list, *and* the chain dictionaries'
+        // bytes (by pointer), so editing a theme dictionary in place forces a
+        // reinstall + a scene rebuild (via `app_resources_epoch`).
         if self.installed_app_resources.as_ref().is_some_and(|s| {
-            s.entries == *entries && s.merged_xaml == merged_xaml && s.chain_uris == chain_uris
+            s.entries == *entries
+                && s.merged_xaml == merged_xaml
+                && s.chain_uris == chain_uris
+                && s.chain_bytes.len() == current_chain_bytes.len()
+                && s.chain_bytes
+                    .iter()
+                    .all(|(k, v)| current_chain_bytes.get(k).is_some_and(|o| Arc::ptr_eq(v, o)))
         }) {
             return None;
         }
@@ -4378,10 +4428,20 @@ impl NoesisRenderState {
             }
         }
 
+        // A *re*install (not the first) means the resolved resources changed
+        // under already-built scenes; bump the epoch so `ensure_scene` rebuilds
+        // them to re-resolve `{StaticResource}`. The first install needs no bump:
+        // scenes gate their build on the chain being present, so they parse
+        // against it from the start.
+        if self.installed_app_resources.is_some() {
+            self.app_resources_epoch = self.app_resources_epoch.wrapping_add(1);
+        }
+
         self.installed_app_resources = Some(AppResourcesSnapshot {
             entries: entries.clone(),
             merged_xaml: merged_xaml.to_vec(),
             chain_uris: chain_uris.to_vec(),
+            chain_bytes: current_chain_bytes,
         });
 
         // Confirm against the live global (now our dict) so the read-back proves

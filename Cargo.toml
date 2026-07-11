@@ -28,11 +28,14 @@ default = []
 # diagnostic; off by default so published consumers don't inherit Bevy's debug
 # overhead. Enable with `features = ["debug"]`.
 debug = ["bevy/debug"]
-# Live-edit XAML: watch the files behind `XamlRegistry` entries and re-insert
-# their bytes on change, which the render pipeline already turns into a view
-# rebuild. A development aid — off by default; pulls the `notify` crate and
-# spins a background watcher thread. Enable with `features = ["hot_reload"]`.
-hot_reload = ["dep:notify"]
+# Live-edit UI: watch the files behind the registries and re-insert their bytes
+# on change, which the render pipeline turns into a view rebuild (including
+# transitive XAML `Source=` dependencies and image re-sizes). A development aid,
+# off by default. Pulls the `notify` crate (a watcher thread for XAML loaded off
+# the `assets/` root via `XamlRegistry::insert`) and Bevy's own `file_watcher`
+# (so `AssetServer`-loaded XAML/images/fonts refresh too). Enable with
+# `features = ["hot_reload"]`.
+hot_reload = ["dep:notify", "bevy/file_watcher"]
 
 [dependencies]
 bevy = "0.19"

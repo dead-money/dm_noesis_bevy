@@ -3,8 +3,10 @@
 //!
 //! Cycle between scenes with `[` / `]`, jump with `Home` / `End`, reload the
 //! current one with `R`, and trigger a screenshot with `S`. Build with
-//! `--features hot_reload` to also reload automatically whenever a scene file
-//! changes on disk (edit-and-save live editing). With
+//! `--features hot_reload` for edit-and-save live editing: any scene file
+//! changing on disk reloads automatically, editing a `Source="…"` dictionary
+//! reloads every scene that merges it, and (for images loaded from `assets/`)
+//! re-saving an image re-sizes and repaints it. With
 //! `NOESIS_VIEWER_EXIT_AFTER=1` set, it waits a few frames, shoots the
 //! configured target (`NOESIS_SCREENSHOT`) and exits, for headless eval.
 //!
@@ -123,15 +125,25 @@ fn main() {
     let screenshot_override = std::env::var_os("NOESIS_SCREENSHOT").map(PathBuf::from);
     let size = parse_size_env().unwrap_or(UVec2::new(1280, 720));
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: format!("xaml_viewer — {arg_path}"),
-                resolution: size.into(),
-                ..default()
-            }),
+    let plugins = DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: format!("xaml_viewer — {arg_path}"),
+            resolution: size.into(),
             ..default()
-        }))
+        }),
+        ..default()
+    });
+    // With hot-reload on, also turn on Bevy's asset file-watcher so images and
+    // fonts loaded through `AssetServer` (from `assets/`) refresh on edit — the
+    // notify watcher below only feeds the directly-inserted scene XAML.
+    #[cfg(feature = "hot_reload")]
+    let plugins = plugins.set(bevy::asset::AssetPlugin {
+        watch_for_changes_override: Some(true),
+        ..default()
+    });
+
+    App::new()
+        .add_plugins(plugins)
         .add_plugins(NoesisPlugin::default())
         .insert_resource(InitialView(NoesisView {
             xaml_uri: scenes[0].uri.clone(),

@@ -71,7 +71,7 @@ use crate::plain_vm::{PlainType, PlainValue, PlainVmEntry, SetSink, unbox};
 use crate::render_device::WgpuRenderDevice;
 use crate::routed_events::{RoutedEventSnapshot, SharedRoutedEventQueue};
 use crate::viewmodel::{AttachTarget, SharedVmChangedQueue, ViewModelDef, VmEntry, VmValue};
-use crate::xaml::{BevyXamlProvider, SharedXamlMap, XamlRegistry};
+use crate::xaml::{BevyXamlProvider, SharedFetchLog, SharedXamlMap, XamlRegistry};
 use noesis_runtime::element_tree::panel_children;
 use noesis_runtime::plain_vm::{PlainInstance, PlainValueRef, PlainVmBuilder, PlainVmClass};
 
@@ -507,6 +507,17 @@ pub(crate) struct NoesisRenderState {
     shared_map: SharedXamlMap,
     shared_fonts: SharedFontMap,
     shared_images: SharedImageMap,
+    /// Dependency fetch-log shared with the installed [`BevyXamlProvider`].
+    /// `ensure_scene` clears it before a build and drains it after, capturing
+    /// the URIs Noesis pulled (root + transitive `Source=` dictionaries) so a
+    /// later change to any of them rebuilds the dependent scene.
+    fetch_log: SharedFetchLog,
+    /// Bumped by [`Self::refresh_images`] whenever an image's bytes change in
+    /// [`ImageRegistry`] (added / removed / replaced `Arc`). Noesis caches a
+    /// decoded texture per URI and never re-issues `LoadTexture` for it, so a
+    /// live edit only shows after a fresh `View` re-requests it; scenes stamp
+    /// this at build time and `ensure_scene` rebuilds any whose stamp is stale.
+    image_epoch: u64,
     // `Option` so `Drop` can take + drop each in the right order.
     registered_device: Option<noesis_runtime::render_device::Registered>,
     registered_provider: Option<noesis_runtime::xaml_provider::Registered>,
@@ -696,6 +707,18 @@ struct SceneInstance {
     /// [`XamlRegistry::insert`] both allocate a fresh `Arc`), the markup
     /// changed and the scene is rebuilt against the new bytes.
     built_bytes: Arc<Vec<u8>>,
+    /// The XAML URIs this scene pulled through the provider at build time —
+    /// its root plus every transitive `Source="…"` dependency — mapped to the
+    /// exact `Arc<Vec<u8>>` served. [`NoesisRenderState::ensure_scene`] rebuilds
+    /// the scene when the shared map's `Arc` for any of these URIs changes, so
+    /// editing a shared `ResourceDictionary` reloads the views that merged it.
+    /// Captured via [`SharedFetchLog`]; the root URI appears here too, so this
+    /// generalizes [`Self::built_bytes`]'s single-URI check.
+    built_deps: HashMap<String, Arc<Vec<u8>>>,
+    /// [`NoesisRenderState::image_epoch`] at build time. When the live epoch
+    /// moves past it (an image's bytes changed), `ensure_scene` rebuilds so the
+    /// fresh `View` re-issues `LoadTexture` and picks up the new bytes.
+    built_image_epoch: u64,
     /// Last render flags written to the view via `View::set_flags`.
     /// Re-applied only when [`NoesisView`] changes; avoids the FFI call
     /// on every frame.
@@ -1033,9 +1056,10 @@ impl NoesisRenderState {
         let shared_map = SharedXamlMap::default();
         let shared_fonts = SharedFontMap::default();
         let shared_images = SharedImageMap::default();
+        let fetch_log = SharedFetchLog::default();
         let wgpu_rd = WgpuRenderDevice::new(device.clone(), queue);
         let registered_device = noesis_runtime::render_device::register(wgpu_rd);
-        let xaml_prov = BevyXamlProvider::from_shared(shared_map.clone());
+        let xaml_prov = BevyXamlProvider::from_parts(shared_map.clone(), fetch_log.clone());
         let registered_provider = noesis_runtime::xaml_provider::set_xaml_provider(xaml_prov);
         let font_prov = BevyFontProvider::from_shared(shared_fonts.clone());
         let registered_fonts = noesis_runtime::font_provider::set_font_provider(font_prov);
@@ -1056,6 +1080,8 @@ impl NoesisRenderState {
             shared_map,
             shared_fonts,
             shared_images,
+            fetch_log,
+            image_epoch: 0,
             registered_device: Some(registered_device),
             registered_provider: Some(registered_provider),
             registered_fonts: Some(registered_fonts),
@@ -1988,8 +2014,29 @@ impl NoesisRenderState {
         &self.shared_fonts
     }
 
-    fn shared_images(&self) -> &SharedImageMap {
-        &self.shared_images
+    /// Sync [`ImageRegistry`] into the provider's shared map, bumping
+    /// [`Self::image_epoch`] first if any image's bytes changed (a key added,
+    /// removed, or its `Arc` replaced). The epoch bump is what makes
+    /// `ensure_scene` rebuild live views so Noesis re-`LoadTexture`s the URI —
+    /// without it a hot-swapped image never reaches the screen. Compares the
+    /// pre-sync map (old `Arc`s) against the registry (new) before overwriting.
+    fn refresh_images(&mut self, registry: &ImageRegistry) {
+        let changed = {
+            let old = self
+                .shared_images
+                .0
+                .lock()
+                .expect("SharedImageMap poisoned");
+            old.len() != registry.entries.len()
+                || registry.entries.iter().any(|(uri, img)| {
+                    old.get(uri)
+                        .is_none_or(|prev| !Arc::ptr_eq(&prev.bytes, &img.bytes))
+                })
+        };
+        if changed {
+            self.image_epoch = self.image_epoch.wrapping_add(1);
+        }
+        self.shared_images.sync_from(registry);
     }
 
     /// Build (or rebuild) the scene instance if the configured URI has
@@ -2032,11 +2079,41 @@ impl NoesisRenderState {
                     && !Arc::ptr_eq(&scene.built_bytes, bytes)
         );
 
+        // Dependency hot-reload: the root URI + bytes are unchanged, but a
+        // `Source="…"` dictionary the scene merged at build time had its bytes
+        // replaced. `built_deps` records the `Arc` served for every URI this
+        // build pulled through the provider; if the shared map now holds a
+        // different `Arc` for any of them (or dropped it entirely), the merged
+        // markup changed and the view must rebuild to re-parse it. Same
+        // pointer-identity signal as `bytes_changed`, widened to dependencies.
+        let deps_changed = self.scenes.get(&entity).is_some_and(|scene| {
+            scene.built_for_uri == config.xaml_uri && {
+                let guard = self.shared_map.0.lock().expect("SharedXamlMap poisoned");
+                scene
+                    .built_deps
+                    .iter()
+                    .any(|(uri, arc)| guard.get(uri).is_none_or(|cur| !Arc::ptr_eq(cur, arc)))
+            }
+        });
+
+        // Image hot-reload: an image's bytes changed in `ImageRegistry` since
+        // this scene built. Noesis won't re-`LoadTexture` a cached URI, so the
+        // scene must rebuild to re-request it. Coarse by design — any image
+        // change rebuilds every live view (a dev aid; scenes are few and
+        // rebuilds cheap), since the provider can't attribute a URI to a view.
+        let images_changed = self
+            .scenes
+            .get(&entity)
+            .is_some_and(|s| s.built_image_epoch != self.image_epoch);
+
+        // Any of these signals forces a full teardown + rebuild, not a resize.
+        let needs_rebuild = bytes_changed || deps_changed || images_changed;
+
         // Same URI + bytes, different size: resize in place without tearing
         // down the View. Rebuild just the intermediate texture; `View::set_size`
         // informs Noesis without invalidating the renderer. Important for
         // desktop window drags, which fire `WindowResized` at every pixel.
-        if !bytes_changed
+        if !needs_rebuild
             && let Some(scene) = self.scenes.get_mut(&entity)
             && scene.built_for_uri == config.xaml_uri
             && scene.size != config.size
@@ -2050,7 +2127,7 @@ impl NoesisRenderState {
             return;
         }
 
-        let up_to_date = !bytes_changed
+        let up_to_date = !needs_rebuild
             && self
                 .scenes
                 .get(&entity)
@@ -2146,6 +2223,13 @@ impl NoesisRenderState {
         // resolved, and `Sync` runs after the provider map is populated, so the
         // resources are installed by now.
 
+        // Capture the XAML dependency set: clear the provider's fetch-log, then
+        // load — Noesis calls the provider once per URI it pulls (root and every
+        // transitive `Source=` dictionary) while parsing, so draining the log
+        // right after gives this scene's exact dependencies. Nothing else fetches
+        // XAML between here and the drain below (app resources / fallbacks ran
+        // above), so the log holds only this build's fetches.
+        self.fetch_log.begin();
         let Some(element) = FrameworkElement::load(&config.xaml_uri) else {
             warn!(
                 "FrameworkElement::load({:?}) returned None despite bytes being in the registry",
@@ -2154,6 +2238,7 @@ impl NoesisRenderState {
             return;
         };
         let mut view = View::create(element);
+        let built_deps = self.fetch_log.take();
         view.set_size(config.size.x, config.size.y);
         view.set_scale(config.scale);
         let initial_flags = flags_from(config);
@@ -2189,6 +2274,8 @@ impl NoesisRenderState {
                 size: config.size,
                 built_for_uri: config.xaml_uri.clone(),
                 built_bytes: current_bytes,
+                built_deps,
+                built_image_epoch: self.image_epoch,
                 applied_flags: initial_flags,
                 applied_scale: config.scale,
                 click_subs: HashMap::new(),
@@ -5343,12 +5430,12 @@ pub(crate) fn sync_font_provider_map(
 #[allow(clippy::needless_pass_by_value)]
 fn sync_texture_provider_map(
     registry: Option<Res<ImageRegistry>>,
-    state: Option<NonSend<NoesisRenderState>>,
+    state: Option<NonSendMut<NoesisRenderState>>,
 ) {
-    let (Some(registry), Some(state)) = (registry, state) else {
+    let (Some(registry), Some(mut state)) = (registry, state) else {
         return;
     };
-    state.shared_images().sync_from(&registry);
+    state.refresh_images(&registry);
 }
 
 /// Ensure a live [`SceneInstance`] exists for each [`NoesisView`] entity once

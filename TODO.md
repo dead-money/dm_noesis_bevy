@@ -25,15 +25,14 @@ runtime/FFI work first are in §4.
 - **More SDK conformance examples.** Port additional Noesis samples as faithful in-crate `examples/` —
   the real sample XAML/assets loaded from `$NOESIS_SDK_DIR` at runtime, data driven through the bridge
   components — to demonstrate our rendering/behavior matches the reference.
-- **Hot-reload follow-ups.** The `hot_reload` feature (`src/hot_reload.rs`) watches explicitly-registered
-  XAML files and re-inserts their bytes, which the render pipeline already turns into a view rebuild.
-  Still open: (a) *dependency tracking* — a view's `Source="…"` dictionaries are fetched through the
-  provider, not registered, so editing them doesn't reload the parent; walk `get_xaml_dependencies`
-  (already in the runtime) and watch each. (b) *fonts/images* — `FontRegistry`/`ImageRegistry` have no
-  reload path, and Noesis caches font-folder scans + missing-texture lookups, so a changed face/texture
-  needs a forced scene rebuild + re-register. (c) *`AssetServer` auto-wiring* — for `assets/`-rooted apps,
-  optionally derive watches from `AssetEvent`s (or lean on `bevy/file_watcher`) instead of explicit
-  `NoesisHotReload::watch` calls.
+- **Hot-reload: same-file font follow-up.** The `hot_reload` feature (`src/hot_reload.rs`) live-reloads
+  XAML (root + transitive `Source="…"` dependencies, via the provider fetch-log) and images (via an
+  image-epoch that forces a rebuild so Noesis re-`LoadTexture`s). Fonts are the remaining gap: a *new*
+  font file works, but editing an already-used face's bytes doesn't show, because Noesis's
+  `CachedFontProvider` ignores a duplicate `RegisterFont` and there's no runtime cache-reset. The only
+  fix is dropping + re-creating the whole font provider (process-global, only done at shutdown today) and
+  rebuilding every view — do it as a focused follow-up with visual verification, likely paired with a
+  `noesis_runtime` font-cache-reset shim.
 
 ## 3. Platform
 
